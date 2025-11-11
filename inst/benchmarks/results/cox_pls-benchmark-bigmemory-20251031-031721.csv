@@ -1,0 +1,2 @@
+expression,min,median,itr/sec,mem_alloc,gc/sec,n_itr,n_gc,total_time,result,memory,time,gc
+big_pls_cox,3.5ms,3.62ms,277.07873871065595,1.4MB,0,5,0,18ms,,,,

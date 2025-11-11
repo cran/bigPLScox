@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+<meta name="date" content="2025-11-06" />
+
+<title>Big-memory workflows with bigPLScox</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Big-memory workflows with bigPLScox</h1>
+<h4 class="author">Frédéric Bertrand</h4>
+<address class="author_afil">
+Cedric, Cnam, Paris<br><a class="author_email" href="mailto:#"><a href="mailto:frederic.bertrand@lecnam.net" class="email">frederic.bertrand@lecnam.net</a></a>
+</address>
+<h4 class="date">2025-11-06</h4>
+
+
+<div id="TOC">
+<ul>
+<li><a href="#motivation" id="toc-motivation">Motivation</a></li>
+<li><a href="#preparing-a-big.matrix" id="toc-preparing-a-big.matrix">Preparing a big.matrix</a></li>
+<li><a href="#fitting-big-memory-models" id="toc-fitting-big-memory-models">Fitting big-memory models</a></li>
+<li><a href="#cross-validation-on-big-matrices" id="toc-cross-validation-on-big-matrices">Cross-validation on big
+matrices</a></li>
+<li><a href="#timing-snapshot" id="toc-timing-snapshot">Timing
+snapshot</a></li>
+<li><a href="#deviance-residuals-with-big-matrices" id="toc-deviance-residuals-with-big-matrices">Deviance residuals with
+big matrices</a></li>
+<li><a href="#cleaning-up" id="toc-cleaning-up">Cleaning up</a></li>
+<li><a href="#additional-resources" id="toc-additional-resources">Additional resources</a></li>
+</ul>
+</div>
+
+<div id="motivation" class="section level1">
+<h1>Motivation</h1>
+<p>A central feature of <strong>bigPLScox</strong> is the ability to
+operate on file-backed <code>bigmemory::big.matrix</code> objects. This
+vignette demonstrates how to prepare such datasets, fit models with
+<code>big_pls_cox()</code> and <code>big_pls_cox_gd()</code>, and
+integrate them with cross-validation helpers. The examples complement
+the introductory vignette “Getting started with bigPLScox”.</p>
+</div>
+<div id="preparing-a-big.matrix" class="section level1">
+<h1>Preparing a big.matrix</h1>
+<p>We simulate a moderately large design matrix and persist it to disk
+via <code>bigmemory::filebacked.big.matrix()</code>. Using file-backed
+storage allows models to train on datasets that exceed the available
+RAM.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(bigPLScox)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="fu">library</span>(bigmemory)</span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">2024</span>)</span>
+<span id="cb1-5"><a href="#cb1-5" tabindex="-1"></a>n_obs <span class="ot">&lt;-</span> <span class="dv">5000</span></span>
+<span id="cb1-6"><a href="#cb1-6" tabindex="-1"></a>n_pred <span class="ot">&lt;-</span> <span class="dv">100</span></span>
+<span id="cb1-7"><a href="#cb1-7" tabindex="-1"></a></span>
+<span id="cb1-8"><a href="#cb1-8" tabindex="-1"></a>X_dense <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">rnorm</span>(n_obs <span class="sc">*</span> n_pred), <span class="at">nrow =</span> n_obs)</span>
+<span id="cb1-9"><a href="#cb1-9" tabindex="-1"></a>time <span class="ot">&lt;-</span> <span class="fu">rexp</span>(n_obs, <span class="at">rate =</span> <span class="fl">0.2</span>)</span>
+<span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a>status <span class="ot">&lt;-</span> <span class="fu">rbinom</span>(n_obs, <span class="dv">1</span>, <span class="fl">0.7</span>)</span>
+<span id="cb1-11"><a href="#cb1-11" tabindex="-1"></a></span>
+<span id="cb1-12"><a href="#cb1-12" tabindex="-1"></a>big_dir <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="st">&quot;bigPLScox-&quot;</span>)</span>
+<span id="cb1-13"><a href="#cb1-13" tabindex="-1"></a><span class="fu">dir.create</span>(big_dir)</span>
+<span id="cb1-14"><a href="#cb1-14" tabindex="-1"></a>X_big <span class="ot">&lt;-</span> <span class="fu">filebacked.big.matrix</span>(</span>
+<span id="cb1-15"><a href="#cb1-15" tabindex="-1"></a>  <span class="at">nrow =</span> n_obs,</span>
+<span id="cb1-16"><a href="#cb1-16" tabindex="-1"></a>  <span class="at">ncol =</span> n_pred,</span>
+<span id="cb1-17"><a href="#cb1-17" tabindex="-1"></a>  <span class="at">backingpath =</span> big_dir,</span>
+<span id="cb1-18"><a href="#cb1-18" tabindex="-1"></a>  <span class="at">backingfile =</span> <span class="st">&quot;X.bin&quot;</span>,</span>
+<span id="cb1-19"><a href="#cb1-19" tabindex="-1"></a>  <span class="at">descriptorfile =</span> <span class="st">&quot;X.desc&quot;</span>,</span>
+<span id="cb1-20"><a href="#cb1-20" tabindex="-1"></a>  <span class="at">init =</span> X_dense</span>
+<span id="cb1-21"><a href="#cb1-21" tabindex="-1"></a>)</span></code></pre></div>
+<p>The resulting <code>big.matrix</code> can be reopened in future
+sessions via its descriptor file. All big-memory modelling functions
+accept either an in-memory matrix or a <code>big.matrix</code>
+reference.</p>
+</div>
+<div id="fitting-big-memory-models" class="section level1">
+<h1>Fitting big-memory models</h1>
+<p><code>big_pls_cox()</code> runs the classical PLS-Cox algorithm while
+streaming data from disk.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>fit_big <span class="ot">&lt;-</span> <span class="fu">big_pls_cox</span>(</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>  <span class="at">X =</span> X_big,</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>  <span class="at">time =</span> time,</span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>  <span class="at">status =</span> status,</span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>  <span class="at">ncomp =</span> <span class="dv">5</span></span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>)</span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a></span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="fu">head</span>(fit_big<span class="sc">$</span>scores)</span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="co">#&gt;               [,1]          [,2]          [,3]          [,4]          [,5]</span></span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a><span class="co">#&gt; [1,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="co">#&gt; [2,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="co">#&gt; [3,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a><span class="co">#&gt; [4,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a><span class="co">#&gt; [5,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb2-15"><a href="#cb2-15" tabindex="-1"></a><span class="co">#&gt; [6,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb2-16"><a href="#cb2-16" tabindex="-1"></a><span class="fu">str</span>(fit_big)</span>
+<span id="cb2-17"><a href="#cb2-17" tabindex="-1"></a><span class="co">#&gt; List of 9</span></span>
+<span id="cb2-18"><a href="#cb2-18" tabindex="-1"></a><span class="co">#&gt;  $ scores  : num [1:5000, 1:5] -4.45e-06 -4.45e-06 -4.45e-06 -4.45e-06 -4.45e-06 ...</span></span>
+<span id="cb2-19"><a href="#cb2-19" tabindex="-1"></a><span class="co">#&gt;  $ loadings: num [1:100, 1:5] -0.1 -0.1 -0.1 -0.1 -0.1 ...</span></span>
+<span id="cb2-20"><a href="#cb2-20" tabindex="-1"></a><span class="co">#&gt;  $ weights : num [1:100, 1:5] -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 ...</span></span>
+<span id="cb2-21"><a href="#cb2-21" tabindex="-1"></a><span class="co">#&gt;  $ center  : num [1:100] 0.982 0.982 0.982 0.982 0.982 ...</span></span>
+<span id="cb2-22"><a href="#cb2-22" tabindex="-1"></a><span class="co">#&gt;  $ scale   : num [1:100] 1.65e-07 1.65e-07 1.65e-07 1.65e-07 1.65e-07 ...</span></span>
+<span id="cb2-23"><a href="#cb2-23" tabindex="-1"></a><span class="co">#&gt;  $ cox_fit :List of 10</span></span>
+<span id="cb2-24"><a href="#cb2-24" tabindex="-1"></a><span class="co">#&gt;   ..$ coefficients     : num [1:5] NA NA 1.82e+41 NA NA</span></span>
+<span id="cb2-25"><a href="#cb2-25" tabindex="-1"></a><span class="co">#&gt;   ..$ var              : num [1:5, 1:5] 0 0 0 0 0 0 0 0 0 0 ...</span></span>
+<span id="cb2-26"><a href="#cb2-26" tabindex="-1"></a><span class="co">#&gt;   ..$ loglik           : num [1:2] -26230 -26230</span></span>
+<span id="cb2-27"><a href="#cb2-27" tabindex="-1"></a><span class="co">#&gt;   ..$ score            : num 8.72e-20</span></span>
+<span id="cb2-28"><a href="#cb2-28" tabindex="-1"></a><span class="co">#&gt;   ..$ iter             : int 1</span></span>
+<span id="cb2-29"><a href="#cb2-29" tabindex="-1"></a><span class="co">#&gt;   ..$ linear.predictors: num [1:5000] 0.000392 0.000392 0.000392 0.000392 0.000392 ...</span></span>
+<span id="cb2-30"><a href="#cb2-30" tabindex="-1"></a><span class="co">#&gt;   ..$ residuals        : Named num [1:5000] 0.8605 0.7913 -0.0129 0.1737 0.9958 ...</span></span>
+<span id="cb2-31"><a href="#cb2-31" tabindex="-1"></a><span class="co">#&gt;   .. ..- attr(*, &quot;names&quot;)= chr [1:5000] &quot;1&quot; &quot;2&quot; &quot;3&quot; &quot;4&quot; ...</span></span>
+<span id="cb2-32"><a href="#cb2-32" tabindex="-1"></a><span class="co">#&gt;   ..$ means            : num [1:5] -4.45e-06 -1.67e-19 -1.67e-32 -1.71e-46 -1.15e-59</span></span>
+<span id="cb2-33"><a href="#cb2-33" tabindex="-1"></a><span class="co">#&gt;   ..$ method           : chr &quot;efron&quot;</span></span>
+<span id="cb2-34"><a href="#cb2-34" tabindex="-1"></a><span class="co">#&gt;   ..$ class            : chr &quot;coxph&quot;</span></span>
+<span id="cb2-35"><a href="#cb2-35" tabindex="-1"></a><span class="co">#&gt;  $ keepX   : int [1:5] 0 0 0 0 0</span></span>
+<span id="cb2-36"><a href="#cb2-36" tabindex="-1"></a><span class="co">#&gt;  $ time    : num [1:5000] 1.024 1.5182 0.1047 5.9911 0.0424 ...</span></span>
+<span id="cb2-37"><a href="#cb2-37" tabindex="-1"></a><span class="co">#&gt;  $ status  : num [1:5000] 1 1 0 1 1 1 1 1 0 1 ...</span></span>
+<span id="cb2-38"><a href="#cb2-38" tabindex="-1"></a><span class="co">#&gt;  - attr(*, &quot;class&quot;)= chr &quot;big_pls_cox&quot;</span></span></code></pre></div>
+<p>The gradient-descent variant <code>big_pls_cox_gd()</code> uses
+stochastic optimisation and is well-suited for very large datasets.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>fit_big_gd <span class="ot">&lt;-</span> <span class="fu">big_pls_cox_gd</span>(</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>  <span class="at">X =</span> X_big,</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="at">time =</span> time,</span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>  <span class="at">status =</span> status,</span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a>  <span class="at">ncomp =</span> <span class="dv">5</span>,</span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>  <span class="at">max_iter =</span> <span class="dv">100</span>,</span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>  <span class="at">tol =</span> <span class="fl">1e-4</span></span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a>  )</span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a></span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a><span class="fu">head</span>(fit_big<span class="sc">$</span>scores)</span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a><span class="co">#&gt;               [,1]          [,2]          [,3]          [,4]          [,5]</span></span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a><span class="co">#&gt; [1,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a><span class="co">#&gt; [2,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a><span class="co">#&gt; [3,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb3-15"><a href="#cb3-15" tabindex="-1"></a><span class="co">#&gt; [4,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb3-16"><a href="#cb3-16" tabindex="-1"></a><span class="co">#&gt; [5,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb3-17"><a href="#cb3-17" tabindex="-1"></a><span class="co">#&gt; [6,] -4.450742e-06 -1.669808e-19 -1.671178e-32 -1.707642e-46 -1.148375e-59</span></span>
+<span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a><span class="fu">str</span>(fit_big)</span>
+<span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a><span class="co">#&gt; List of 9</span></span>
+<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a><span class="co">#&gt;  $ scores  : num [1:5000, 1:5] -4.45e-06 -4.45e-06 -4.45e-06 -4.45e-06 -4.45e-06 ...</span></span>
+<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a><span class="co">#&gt;  $ loadings: num [1:100, 1:5] -0.1 -0.1 -0.1 -0.1 -0.1 ...</span></span>
+<span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a><span class="co">#&gt;  $ weights : num [1:100, 1:5] -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 -0.1 ...</span></span>
+<span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a><span class="co">#&gt;  $ center  : num [1:100] 0.982 0.982 0.982 0.982 0.982 ...</span></span>
+<span id="cb3-24"><a href="#cb3-24" tabindex="-1"></a><span class="co">#&gt;  $ scale   : num [1:100] 1.65e-07 1.65e-07 1.65e-07 1.65e-07 1.65e-07 ...</span></span>
+<span id="cb3-25"><a href="#cb3-25" tabindex="-1"></a><span class="co">#&gt;  $ cox_fit :List of 10</span></span>
+<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a><span class="co">#&gt;   ..$ coefficients     : num [1:5] NA NA 1.82e+41 NA NA</span></span>
+<span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a><span class="co">#&gt;   ..$ var              : num [1:5, 1:5] 0 0 0 0 0 0 0 0 0 0 ...</span></span>
+<span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a><span class="co">#&gt;   ..$ loglik           : num [1:2] -26230 -26230</span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a><span class="co">#&gt;   ..$ score            : num 8.72e-20</span></span>
+<span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a><span class="co">#&gt;   ..$ iter             : int 1</span></span>
+<span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a><span class="co">#&gt;   ..$ linear.predictors: num [1:5000] 0.000392 0.000392 0.000392 0.000392 0.000392 ...</span></span>
+<span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a><span class="co">#&gt;   ..$ residuals        : Named num [1:5000] 0.8605 0.7913 -0.0129 0.1737 0.9958 ...</span></span>
+<span id="cb3-33"><a href="#cb3-33" tabindex="-1"></a><span class="co">#&gt;   .. ..- attr(*, &quot;names&quot;)= chr [1:5000] &quot;1&quot; &quot;2&quot; &quot;3&quot; &quot;4&quot; ...</span></span>
+<span id="cb3-34"><a href="#cb3-34" tabindex="-1"></a><span class="co">#&gt;   ..$ means            : num [1:5] -4.45e-06 -1.67e-19 -1.67e-32 -1.71e-46 -1.15e-59</span></span>
+<span id="cb3-35"><a href="#cb3-35" tabindex="-1"></a><span class="co">#&gt;   ..$ method           : chr &quot;efron&quot;</span></span>
+<span id="cb3-36"><a href="#cb3-36" tabindex="-1"></a><span class="co">#&gt;   ..$ class            : chr &quot;coxph&quot;</span></span>
+<span id="cb3-37"><a href="#cb3-37" tabindex="-1"></a><span class="co">#&gt;  $ keepX   : int [1:5] 0 0 0 0 0</span></span>
+<span id="cb3-38"><a href="#cb3-38" tabindex="-1"></a><span class="co">#&gt;  $ time    : num [1:5000] 1.024 1.5182 0.1047 5.9911 0.0424 ...</span></span>
+<span id="cb3-39"><a href="#cb3-39" tabindex="-1"></a><span class="co">#&gt;  $ status  : num [1:5000] 1 1 0 1 1 1 1 1 0 1 ...</span></span>
+<span id="cb3-40"><a href="#cb3-40" tabindex="-1"></a><span class="co">#&gt;  - attr(*, &quot;class&quot;)= chr &quot;big_pls_cox&quot;</span></span></code></pre></div>
+<p>Both functions return objects that expose the latent scores and
+loading vectors, allowing downstream visualisations and diagnostics
+identical to their in-memory counterparts.</p>
+</div>
+<div id="cross-validation-on-big-matrices" class="section level1">
+<h1>Cross-validation on big matrices</h1>
+<p>Cross-validation for big-memory models is supported through the list
+interface. This enables streaming each fold directly from disk.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">2024</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>data_big <span class="ot">&lt;-</span> <span class="fu">list</span>(<span class="at">x =</span> X_big, <span class="at">time =</span> time, <span class="at">status =</span> status)</span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>cv_big <span class="ot">&lt;-</span> <span class="fu">cv.coxgpls</span>(</span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>  data_big,</span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>  <span class="at">nt =</span> <span class="dv">5</span>,</span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>  <span class="at">ncores =</span> <span class="dv">1</span>,</span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>  <span class="at">ind.block.x =</span> <span class="fu">c</span>(<span class="dv">10</span>, <span class="dv">40</span>)</span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>)</span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>cv_big<span class="sc">$</span>opt_nt</span></code></pre></div>
+<p>For large experiments consider combining
+<code>foreach::foreach()</code> with
+<code>doParallel::registerDoParallel()</code> to parallelise folds.</p>
+</div>
+<div id="timing-snapshot" class="section level1">
+<h1>Timing snapshot</h1>
+<p>The native C++ solvers substantially reduce wall-clock time compared
+to fitting through the R interface alone. The <code>bench</code> package
+provides convenient instrumentation; the chunk below only runs when it
+is available.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">requireNamespace</span>(<span class="st">&quot;bench&quot;</span>, <span class="at">quietly =</span> <span class="cn">TRUE</span>)) {</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>  bench<span class="sc">::</span><span class="fu">mark</span>(</span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>    <span class="at">streaming =</span> <span class="fu">big_pls_cox</span>(X_big, time, status, <span class="at">ncomp =</span> <span class="dv">5</span>, <span class="at">keepX =</span> <span class="dv">0</span>),</span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a>    <span class="at">gd =</span> <span class="fu">big_pls_cox_gd</span>(X_big, time, status, <span class="at">ncomp =</span> <span class="dv">5</span>, <span class="at">max_iter =</span> <span class="dv">150</span>),</span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a>    <span class="at">iterations =</span> <span class="dv">5</span>,</span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a>    <span class="at">check =</span> <span class="cn">FALSE</span></span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a>  )</span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a>}</span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="co">#&gt; # A tibble: 2 × 6</span></span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="co">#&gt;   expression      min   median `itr/sec` mem_alloc `gc/sec`</span></span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a><span class="co">#&gt;   &lt;bch:expr&gt; &lt;bch:tm&gt; &lt;bch:tm&gt;     &lt;dbl&gt; &lt;bch:byt&gt;    &lt;dbl&gt;</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="co">#&gt; 1 streaming    30.4ms   30.5ms      32.7    8.81MB     8.19</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="co">#&gt; 2 gd             13ms   13.2ms      75.2    6.79MB    18.8</span></span></code></pre></div>
+</div>
+<div id="deviance-residuals-with-big-matrices" class="section level1">
+<h1>Deviance residuals with big matrices</h1>
+<p>Once a model has been fitted we can evaluate deviance residuals using
+the new C++ backend. Supplying the linear predictor avoids recomputing
+it in R and works with any matrix backend.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>eta_big <span class="ot">&lt;-</span> <span class="fu">predict</span>(fit_big, <span class="at">type =</span> <span class="st">&quot;link&quot;</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>dr_cpp <span class="ot">&lt;-</span> <span class="fu">computeDR</span>(time, status, <span class="at">engine =</span> <span class="st">&quot;cpp&quot;</span>, <span class="at">eta =</span> eta_big)</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="fu">max</span>(<span class="fu">abs</span>(dr_cpp <span class="sc">-</span> <span class="fu">computeDR</span>(time, status)))</span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="co">#&gt; [1] 3.877472</span></span></code></pre></div>
+</div>
+<div id="cleaning-up" class="section level1">
+<h1>Cleaning up</h1>
+<p>Temporary backing files can be removed after the analysis. In
+production pipelines you will typically keep the descriptor file
+alongside the binary data.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="fu">rm</span>(X_big)</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="fu">file.remove</span>(<span class="fu">file.path</span>(big_dir, <span class="st">&quot;X.bin&quot;</span>))</span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a><span class="fu">file.remove</span>(<span class="fu">file.path</span>(big_dir, <span class="st">&quot;X.desc&quot;</span>))</span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a><span class="fu">unlink</span>(big_dir, <span class="at">recursive =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
+</div>
+<div id="additional-resources" class="section level1">
+<h1>Additional resources</h1>
+<ul>
+<li><code>help(big_pls_cox)</code> and <code>help(big_pls_cox_gd)</code>
+document all tuning parameters for the big-memory solvers.</li>
+<li>The benchmarking vignette demonstrates how to measure performance
+improvements obtained with file-backed matrices.</li>
+<li>Consider persisting fitted objects with <code>saveRDS()</code> to
+avoid recomputing large models when iterating on analyses.</li>
+</ul>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>
