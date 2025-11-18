@@ -10,7 +10,9 @@ knitr::opts_chunk$set(
   warning = FALSE
 )
 
-## ----load-data----------------------------------------------------------------
+LOCAL <- identical(Sys.getenv("LOCAL"), "TRUE")
+
+## ----load-data, cache=TRUE, eval=LOCAL----------------------------------------
 library(bigPLScox)
 
 data(micro.censure)
@@ -35,11 +37,11 @@ Y_test <- Y_all[test_id]
 status_train <- status_all[train_id]
 status_test <- status_all[test_id]
 
-## ----original-design----------------------------------------------------------
+## ----original-design, cache=TRUE, eval=LOCAL----------------------------------
 X_train_raw <- Xmicro.censure_compl_imp[train_id, ]
 X_test_raw <- Xmicro.censure_compl_imp[test_id, ]
 
-## ----deviance-residuals-------------------------------------------------------
+## ----deviance-residuals, cache=TRUE, eval=LOCAL-------------------------------
 residuals_overview <- computeDR(Y_train, status_train, plot = TRUE)
 eta_null <- rep(0, length(Y_train))
 head(residuals_overview)
@@ -60,18 +62,18 @@ all.equal(
   tolerance = 1e-7
 )
 
-## ----fit-coxgpls--------------------------------------------------------------
+## ----fit-coxgpls, cache=TRUE, eval=LOCAL--------------------------------------
 set.seed(123)
 cox_pls_fit <- coxgpls(
   Xplan = X_train,
   time = Y_train,
   status = status_train,
   ncomp = 6,
-    ind.block.x = c(3, 10, 20)
+  ind.block.x = c(3, 10, 20)
 )
 cox_pls_fit
 
-## ----fit-formula--------------------------------------------------------------
+## ----fit-formula, cache=TRUE, eval=LOCAL--------------------------------------
 cox_pls_fit_formula <- coxgpls(
   ~ ., Y_train, status_train,
   ncomp = 6,
@@ -80,7 +82,7 @@ cox_pls_fit_formula <- coxgpls(
 )
 cox_pls_fit_formula
 
-## ----cv-coxgpls---------------------------------------------------------------
+## ----cv-coxgpls, cache=TRUE, eval=LOCAL---------------------------------------
 set.seed(123456)
 cv_results <- suppressWarnings(cv.coxgpls(
   list(x = X_train, time = Y_train, status = status_train),
@@ -89,7 +91,7 @@ cv_results <- suppressWarnings(cv.coxgpls(
 ))
 cv_results
 
-## ----fit-coxgplsdr------------------------------------------------------------
+## ----fit-coxgplsdr, cache=TRUE, eval=LOCAL------------------------------------
 set.seed(123456)
 cox_pls_dr <- coxgplsDR(
   Xplan = X_train,
@@ -100,7 +102,95 @@ cox_pls_dr <- coxgplsDR(
 )
 cox_pls_dr
 
-## ----dk-splines---------------------------------------------------------------
+## ----fast-dense, cache=TRUE, eval=LOCAL---------------------------------------
+fast_fit_dense <- big_pls_cox_fast(
+  X = X_train,
+  time = Y_train,
+  status = status_train,
+  ncomp = 4
+)
+summary(fast_fit_dense)
+
+## ----fast-dense-predict, cache=TRUE, eval=LOCAL-------------------------------
+linear_predictor_fast <- predict(fast_fit_dense, newdata = X_test, type = "link")
+head(linear_predictor_fast)
+
+## ----classic-dense, cache=TRUE, eval=LOCAL------------------------------------
+legacy_fit_dense <- big_pls_cox(
+  X = X_train,
+  time = Y_train,
+  status = status_train,
+  ncomp = 4
+)
+legacy_fit_dense$cox_fit
+
+## ----fastvsgd, cache=TRUE, eval=LOCAL-----------------------------------------
+set.seed(2024)
+# Exact fast PLS Cox (dense)
+fast_fit_dense <- big_pls_cox_fast(
+  X     = X_train,
+  time  = Y_train,
+  status = status_train,
+  ncomp = 4
+)
+
+# Exact fast PLS Cox (big.matrix)
+if (requireNamespace("bigmemory", quietly = TRUE)) {
+  library(bigmemory)
+  X_big_train <- bigmemory::as.big.matrix(X_train)
+  X_big_test  <- bigmemory::as.big.matrix(X_test)
+
+  fast_fit_big <- big_pls_cox_fast(
+    X      = X_big_train,
+    time   = Y_train,
+    status = status_train,
+    ncomp  = 4
+  )
+
+  # Gradient based fit in the same latent space
+  gd_fit <- big_pls_cox_gd(
+    X        = X_big_train,
+    time     = Y_train,
+    status   = status_train,
+    ncomp    = 4,
+    max_iter = 2000
+  )
+
+  risk_table <- data.frame(
+    subject   = seq_along(test_id),
+    fast_dense = predict(fast_fit_dense, newdata = X_test, type = "link"),
+    fast_big   = predict(fast_fit_big,   newdata = X_big_test, type = "link"),
+    gd         = predict(gd_fit,         newdata = X_big_test, type = "link")
+  )
+
+  concordances <- apply(
+    risk_table[-1],
+    2,
+    function(lp) {
+      survival::concordance(
+        survival::Surv(Y_test, status_test) ~ lp
+      )$concordance
+    }
+  )
+
+  concordances
+}
+
+## ----prediction-components, cache=TRUE, eval=LOCAL----------------------------
+if (exists("fast_fit_dense")) {
+  component_scores <- predict(fast_fit_dense, newdata = X_test, type = "components")
+  head(component_scores)
+}
+
+## ----concordance, cache=TRUE, eval=LOCAL--------------------------------------
+if (exists("fast_fit_dense")) {
+  concordance_fast <- survival::concordance(
+    survival::Surv(Y_test, status_test) ~ linear_predictor_fast
+  )$concordance
+  concordance_fast
+}
+
+## ----dk-splines, cache=TRUE, eval=LOCAL---------------------------------------
 cox_DKsplsDR_fit <- coxDKgplsDR(
   Xplan = X_train,
   time = Y_train,
@@ -112,7 +202,7 @@ cox_DKsplsDR_fit <- coxDKgplsDR(
 )
 cox_DKsplsDR_fit
 
-## ----cv-dk-splines------------------------------------------------------------
+## ----cv-dk-splines, cache=TRUE, eval=LOCAL------------------------------------
 set.seed(2468)
 cv_coxDKgplsDR_res <- suppressWarnings(cv.coxDKgplsDR(
   list(x = X_train, time = Y_train, status = status_train),
@@ -120,37 +210,4 @@ cv_coxDKgplsDR_res <- suppressWarnings(cv.coxDKgplsDR(
   ind.block.x = c(3, 10, 20)
 ))
 cv_coxDKgplsDR_res
-
-# Unified prediction comparison
-
-if (requireNamespace("bigmemory", quietly = TRUE)) {
-  library(bigmemory)
-  X_big_train <- bigmemory::as.big.matrix(X_train)
-  X_big_test <- bigmemory::as.big.matrix(X_test)
-  big_fit <- big_pls_cox(X_big_train, Y_train, status_train, ncomp = 4)
-  gd_fit <- big_pls_cox_gd(X_big_train, Y_train, status_train, ncomp = 4, max_iter = 200)
-
-  risk_table <- data.frame(
-    subject = seq_along(test_id),
-    big_pls = predict(big_fit, newdata = X_big_test, type = "link", comps = 1:4),
-    big_pls_gd = predict(gd_fit, newdata = X_big_test, type = "link", comps = 1:4)
-  )
-
-  if (requireNamespace("plsRcox", quietly = TRUE)) {
-    pls_fit <- try(plsRcox::plsRcox(Y_train, status_train, X_train_raw, nt = 4), silent = TRUE)
-    if (!inherits(pls_fit, "try-error") && !is.null(pls_fit$Coefficients)) {
-      risk_table$plsRcox <- as.numeric(as.matrix(X_test_raw) %*% pls_fit$Coefficients)
-    }
-  }
-
-  risk_table
-
-  apply(
-    risk_table[-1],
-    2,
-    function(lp) {
-      survival::concordance(survival::Surv(Y_test, status_test) ~ lp)$concordance
-    }
-  )
-}
 

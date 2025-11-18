@@ -2,19 +2,9 @@
 % Please edit documentation in R/predict-big_pls.R
 \name{predict.big_pls_cox}
 \alias{predict.big_pls_cox}
-\alias{predict.big_pls_cox_gd}
 \title{Predict method for big-memory PLS-Cox models}
 \usage{
 \method{predict}{big_pls_cox}(
-  object,
-  newdata = NULL,
-  type = c("link", "risk", "response", "components"),
-  comps = NULL,
-  coef = NULL,
-  ...
-)
-
-\method{predict}{big_pls_cox_gd}(
   object,
   newdata = NULL,
   type = c("link", "risk", "response", "components"),

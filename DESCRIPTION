@@ -1,7 +1,7 @@
 Package: bigPLScox
 Type: Package
-Version: 0.6.0
-Date: 2025-11-01
+Version: 0.8.1
+Date: 2025-11-15
 Depends: R (>= 4.0.0)
 biocViews:
 Imports: bigmemory, bigalgebra, bigSurvSGD, caret, doParallel, foreach,
@@ -31,14 +31,14 @@ Description: Provides Partial least squares Regression and various regular, spar
 License: GPL-3
 Encoding: UTF-8
 URL: https://fbertran.github.io/bigPLScox/,
-        https://github.com/fbertran/bigPLScox/
-BugReports: https://github.com/fbertran/bigPLScox/issues/
+        https://github.com/fbertran/bigPLScox
+BugReports: https://github.com/fbertran/bigPLScox/issues
 Classification/MSC: 62N01, 62N02, 62N03, 62N99
 RoxygenNote: 7.3.3
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 SystemRequirements: C++17
 NeedsCompilation: yes
-Packaged: 2025-11-06 16:20:26 UTC; bertran7
+Packaged: 2025-11-17 22:21:32 UTC; bertran7
 Repository: CRAN
-Date/Publication: 2025-11-11 21:20:15 UTC
+Date/Publication: 2025-11-18 14:40:06 UTC

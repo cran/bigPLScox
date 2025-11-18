@@ -27,19 +27,32 @@ knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE
 )
+
+LOCAL <- identical(Sys.getenv("LOCAL"), "TRUE")
 ```
 
-# Introduction
+# Why bigPLScox?
 
-The **bigPLScox** package provides tools to fit Partial Least Squares (PLS)
-models tailored to the Cox proportional hazards setting. It includes
-cross-validation helpers, diagnostic utilities, and interfaces that work with
-both in-memory matrices and `bigmemory` objects. This vignette walks through a
-core workflow on the allelotyping dataset bundled with the package.
+**bigPLScox** implements Partial Least Squares (PLS) extensions of the Cox
+proportional hazards model that remain stable in high-dimensional survival
+settings. The package now ships with three complementary engines:
 
-# Loading the data
+* `coxgpls()` – the classical matrix-based estimator with optional sparse and
+  grouped variants (e.g. `coxsgpls()`, `coxspls_sgpls()`).
+* `big_pls_cox_fast()` – the new Armadillo backend that produces variance-one
+  components and supports both dense matrices and `bigmemory::big.matrix`
+  objects through the same interface.
+* `big_pls_cox_gd()` – a stochastic gradient descent solver that streams data
+  from disk and converges quickly even when only a subset of predictors remains
+  active at each step.
 
-```{r load-data}
+Together with the deviance-residual solvers and cross-validation helpers, these
+functions cover the most common modelling workflows. This vignette walks through
+those workflows using the bundled allelotyping dataset.
+
+# Loading the example data
+
+```{r load-data, cache=TRUE, eval=LOCAL}
 library(bigPLScox)
 
 data(micro.censure)
@@ -65,21 +78,21 @@ status_train <- status_all[train_id]
 status_test <- status_all[test_id]
 ```
 
-The original factor-based design matrix is also available should you prefer to
-work with categorical predictors directly.
+The original factor-based design matrix is also available if you wish to
+leverage the formula interface.
 
-```{r original-design}
+```{r original-design, cache=TRUE, eval=LOCAL}
 X_train_raw <- Xmicro.censure_compl_imp[train_id, ]
 X_test_raw <- Xmicro.censure_compl_imp[test_id, ]
 ```
 
-# Exploring deviance residuals
+# Inspecting deviance residuals
 
-`computeDR()` extracts deviance residuals from a null Cox model. Inspecting them
-before fitting the PLS components helps detect anomalies in the survival
-outcomes.
+Deviance residuals can reveal problematic observations before any components are
+extracted. The helper `computeDR()` exposes both an R and a C++ engine; the
+latter is substantially faster and powers the new fast PLS routines.
 
-```{r deviance-residuals}
+```{r deviance-residuals, cache=TRUE, eval=LOCAL}
 residuals_overview <- computeDR(Y_train, status_train, plot = TRUE)
 eta_null <- rep(0, length(Y_train))
 head(residuals_overview)
@@ -101,27 +114,28 @@ all.equal(
 )
 ```
 
-# Fitting Cox PLS models
+# Matrix-based PLS–Cox models
 
-The matrix interface to `coxgpls()` mirrors `survival::coxph()` while adding
-latent components that stabilise estimation in high dimensions.
+The matrix interface mimics `survival::coxph()` while augmenting the predictor
+space with latent components. Most users start with `coxgpls()` and the
+cross-validation helper `cv.coxgpls()`.
 
-```{r fit-coxgpls}
+```{r fit-coxgpls, cache=TRUE, eval=LOCAL}
 set.seed(123)
 cox_pls_fit <- coxgpls(
   Xplan = X_train,
   time = Y_train,
   status = status_train,
   ncomp = 6,
-    ind.block.x = c(3, 10, 20)
+  ind.block.x = c(3, 10, 20)
 )
 cox_pls_fit
 ```
 
-A formula interface is also available when working with data frames that include
-both predictors and survival outcomes.
+The formula interface accepts data frames containing the predictors along with
+survival outcomes.
 
-```{r fit-formula}
+```{r fit-formula, cache=TRUE, eval=LOCAL}
 cox_pls_fit_formula <- coxgpls(
   ~ ., Y_train, status_train,
   ncomp = 6,
@@ -131,13 +145,12 @@ cox_pls_fit_formula <- coxgpls(
 cox_pls_fit_formula
 ```
 
-# Cross-validation utilities
+## Cross-validation
 
-Repeated cross-validation helps determine the appropriate number of latent
-components. Provide either a matrix or a list with `x`, `time`, and `status`
-entries.
+Repeated cross-validation stabilises the choice of latent components. The
+returned object records the optimal number of components and diagnostic curves.
 
-```{r cv-coxgpls}
+```{r cv-coxgpls, cache=TRUE, eval=LOCAL}
 set.seed(123456)
 cv_results <- suppressWarnings(cv.coxgpls(
   list(x = X_train, time = Y_train, status = status_train),
@@ -147,10 +160,10 @@ cv_results <- suppressWarnings(cv.coxgpls(
 cv_results
 ```
 
-The selected number of components is stored under `cv_results$opt_nt`. Use it to
-refit the model with the deviance residual solver for comparison.
+Use the selected number of components to refit with the deviance-residual solver
+for a robustness check.
 
-```{r fit-coxgplsdr}
+```{r fit-coxgplsdr, cache=TRUE, eval=LOCAL}
 set.seed(123456)
 cox_pls_dr <- coxgplsDR(
   Xplan = X_train,
@@ -162,12 +175,150 @@ cox_pls_dr <- coxgplsDR(
 cox_pls_dr
 ```
 
+Sparse and structured sparse variants (`coxsgpls()`, `coxspls_sgpls()`) share the
+same workflow with additional arguments that control the number of selected
+predictors per component (`keepX`) or penalty strength.
+
+# Fast solvers for medium-sized data
+
+The new `big_pls_cox_fast()` routine exposes identical arguments for dense
+matrices and `big.matrix` objects. On moderate data it serves as a drop-in
+replacement for the original R implementation `big_pls_cox()`.
+
+```{r fast-dense, cache=TRUE, eval=LOCAL}
+fast_fit_dense <- big_pls_cox_fast(
+  X = X_train,
+  time = Y_train,
+  status = status_train,
+  ncomp = 4
+)
+summary(fast_fit_dense)
+```
+
+Predictions rely on the same `predict()` interface used by the classical
+function.
+
+```{r fast-dense-predict, cache=TRUE, eval=LOCAL}
+linear_predictor_fast <- predict(fast_fit_dense, newdata = X_test, type = "link")
+head(linear_predictor_fast)
+```
+
+For comparison, the legacy solver is still available. The C++ backend usually
+reduces runtime by an order of magnitude while delivering components scaled to
+variance one.
+
+```{r classic-dense, cache=TRUE, eval=LOCAL}
+legacy_fit_dense <- big_pls_cox(
+  X = X_train,
+  time = Y_train,
+  status = status_train,
+  ncomp = 4
+)
+legacy_fit_dense$cox_fit
+```
+
+## Fast PLS Cox vs gradient based PLS Cox
+
+The package provides two families of PLS Cox estimators:
+
+- `big_pls_cox_fast`  
+  Exact PLS components computed in compiled code, with a single Cox fit at the end.
+- `big_pls_cox_gd`  
+  A gradient based Cox optimisation performed in the latent PLS space.
+
+Both approaches share the same preprocessing (centering and scaling), the same PLS deflation scheme and the same prediction interface. The main difference is how the final Cox coefficients are obtained.
+
+In the exact fast path, we build PLS components that are tailored to Cox score residuals, then fit a Cox model once on the resulting scores. In the gradient based path, we optimise the partial log-likelihood directly in the space spanned by the PLS scores, using one of several optimisers.
+
+The code below illustrates a typical benchmark on a moderate survival data set. The design is split into a training set used to fit the models and a test set used to evaluate concordance.
+
+```{r fastvsgd, cache=TRUE, eval=LOCAL}
+set.seed(2024)
+# Exact fast PLS Cox (dense)
+fast_fit_dense <- big_pls_cox_fast(
+  X     = X_train,
+  time  = Y_train,
+  status = status_train,
+  ncomp = 4
+)
+
+# Exact fast PLS Cox (big.matrix)
+if (requireNamespace("bigmemory", quietly = TRUE)) {
+  library(bigmemory)
+  X_big_train <- bigmemory::as.big.matrix(X_train)
+  X_big_test  <- bigmemory::as.big.matrix(X_test)
+
+  fast_fit_big <- big_pls_cox_fast(
+    X      = X_big_train,
+    time   = Y_train,
+    status = status_train,
+    ncomp  = 4
+  )
+
+  # Gradient based fit in the same latent space
+  gd_fit <- big_pls_cox_gd(
+    X        = X_big_train,
+    time     = Y_train,
+    status   = status_train,
+    ncomp    = 4,
+    max_iter = 2000
+  )
+
+  risk_table <- data.frame(
+    subject   = seq_along(test_id),
+    fast_dense = predict(fast_fit_dense, newdata = X_test, type = "link"),
+    fast_big   = predict(fast_fit_big,   newdata = X_big_test, type = "link"),
+    gd         = predict(gd_fit,         newdata = X_big_test, type = "link")
+  )
+
+  concordances <- apply(
+    risk_table[-1],
+    2,
+    function(lp) {
+      survival::concordance(
+        survival::Surv(Y_test, status_test) ~ lp
+      )$concordance
+    }
+  )
+
+  concordances
+}
+```
+
+`big_pls_cox_gd()` is particularly useful for streamed data or when the number
+of active predictors per component is restricted via `keepX`.
+
+# Predictions and evaluation
+
+All solvers return latent scores and loadings that can be reused for plotting or
+external validation. Use `predict(..., type = "components")` to extract the
+scores directly.
+
+```{r prediction-components, cache=TRUE, eval=LOCAL}
+if (exists("fast_fit_dense")) {
+  component_scores <- predict(fast_fit_dense, newdata = X_test, type = "components")
+  head(component_scores)
+}
+```
+
+The concordance index provides a quick check of predictive ability on the test
+set.
+
+```{r concordance, cache=TRUE, eval=LOCAL}
+if (exists("fast_fit_dense")) {
+  concordance_fast <- survival::concordance(
+    survival::Surv(Y_test, status_test) ~ linear_predictor_fast
+  )$concordance
+  concordance_fast
+}
+```
+
 # DK-splines extension
 
 For flexible baseline hazards the `coxDKgplsDR()` estimator augments the PLS
 components with DK-splines. The interface mirrors the previous functions.
 
-```{r dk-splines}
+```{r dk-splines, cache=TRUE, eval=LOCAL}
 cox_DKsplsDR_fit <- coxDKgplsDR(
   Xplan = X_train,
   time = Y_train,
@@ -182,7 +333,7 @@ cox_DKsplsDR_fit
 
 Cross-validation is available for the DK-splines estimator as well.
 
-```{r cv-dk-splines}
+```{r cv-dk-splines, cache=TRUE, eval=LOCAL}
 set.seed(2468)
 cv_coxDKgplsDR_res <- suppressWarnings(cv.coxDKgplsDR(
   list(x = X_train, time = Y_train, status = status_train),
@@ -190,46 +341,16 @@ cv_coxDKgplsDR_res <- suppressWarnings(cv.coxDKgplsDR(
   ind.block.x = c(3, 10, 20)
 ))
 cv_coxDKgplsDR_res
-
-# Unified prediction comparison
-
-if (requireNamespace("bigmemory", quietly = TRUE)) {
-  library(bigmemory)
-  X_big_train <- bigmemory::as.big.matrix(X_train)
-  X_big_test <- bigmemory::as.big.matrix(X_test)
-  big_fit <- big_pls_cox(X_big_train, Y_train, status_train, ncomp = 4)
-  gd_fit <- big_pls_cox_gd(X_big_train, Y_train, status_train, ncomp = 4, max_iter = 200)
-
-  risk_table <- data.frame(
-    subject = seq_along(test_id),
-    big_pls = predict(big_fit, newdata = X_big_test, type = "link", comps = 1:4),
-    big_pls_gd = predict(gd_fit, newdata = X_big_test, type = "link", comps = 1:4)
-  )
-
-  if (requireNamespace("plsRcox", quietly = TRUE)) {
-    pls_fit <- try(plsRcox::plsRcox(Y_train, status_train, X_train_raw, nt = 4), silent = TRUE)
-    if (!inherits(pls_fit, "try-error") && !is.null(pls_fit$Coefficients)) {
-      risk_table$plsRcox <- as.numeric(as.matrix(X_test_raw) %*% pls_fit$Coefficients)
-    }
-  }
-
-  risk_table
-
-  apply(
-    risk_table[-1],
-    2,
-    function(lp) {
-      survival::concordance(survival::Surv(Y_test, status_test) ~ lp)$concordance
-    }
-  )
-}
 ```
+
 
 # Next steps
 
-* `vignette("bigPLScox-overview", package = "bigPLScox")` summarises the main
-  modelling functions and their big-memory counterparts.
-* `vignette("bigPLScox-benchmarking", package = "bigPLScox")` explains how to
-  reproduce performance comparisons with the scripts under `inst/benchmarks/`.
-* The README and package website provide further references and data preparation
-  tips for large-scale studies.
+* `vignette("bigPLScox", package = "bigPLScox")` dives deeper into the fast
+  big-memory backends and shows how to reconcile the dense and streaming
+  implementations.
+* `vignette("bigPLScox-benchmarking", package = "bigPLScox")` demonstrates a
+  reproducible benchmarking workflow that contrasts the classical, fast, and
+  gradient-descent solvers against `survival::coxph()`.
+* The reference documentation (`help("big_pls_cox_fast")`, etc.) details every
+  argument and return value for the modelling functions discussed above.

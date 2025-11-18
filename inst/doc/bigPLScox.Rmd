@@ -1,6 +1,6 @@
 ---
-title: "Big-memory workflows with bigPLScox"
-shorttitle: "Big-memory workflows"
+title: "Fast big-memory workflows with bigPLScox"
+shorttitle: "Fast big-memory workflows"
 author:
 - name: "Frédéric Bertrand"
   affiliation:
@@ -11,7 +11,7 @@ output:
   rmarkdown::html_vignette:
     toc: true
 vignette: >
-  %\VignetteIndexEntry{Big-memory workflows with bigPLScox}
+  %\VignetteIndexEntry{Fast big-memory workflows with bigPLScox}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -21,162 +21,287 @@ vignette: >
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
-  fig.path = "figures/bigmemory-",
+  fig.path = "figures/fast-big--",
   fig.width = 7,
   fig.height = 4.5,
   dpi = 150,
   message = FALSE,
   warning = FALSE
 )
+
+LOCAL <- identical(Sys.getenv("LOCAL"), "TRUE")
 ```
 
-# Motivation
+# Introduction
 
-A central feature of **bigPLScox** is the ability to operate on file-backed
-`bigmemory::big.matrix` objects. This vignette demonstrates how to prepare such
-datasets, fit models with `big_pls_cox()` and `big_pls_cox_gd()`, and integrate
-them with cross-validation helpers. The examples complement the introductory
-vignette "Getting started with bigPLScox".
+Large survival datasets often outgrow the capabilities of purely in-memory
+algorithms. **bigPLScox** therefore offers three flavours of Partial Least Squares
+(PLS) components for Cox models:
 
-# Preparing a big.matrix
+1. `big_pls_cox()` – the original R/C++ hybrid that expects dense matrices;
+2. `big_pls_cox_fast()` – the new Armadillo backend with variance-one components
+   and support for both dense matrices and `bigmemory::big.matrix` objects; and
+3. `big_pls_cox_gd()` – a stochastic gradient descent (SGD) solver for streaming
+   or disk-backed data.
+   allowing datasets too large to fit in RAM.
 
-We simulate a moderately large design matrix and persist it to disk via
-`bigmemory::filebacked.big.matrix()`. Using file-backed storage allows models to
-train on datasets that exceed the available RAM.
+This vignette demonstrates how to build file-backed matrices, run the fast
+backends, and reconcile their outputs. It complements the introductory vignette
+`vignette("getting-started", package = "bigPLScox")` and focuses on workflow
+patterns specific to large datasets.
 
-```{r simulate-bigmatrix}
+# Simulating a large survival dataset
+
+We generate a synthetic dataset with correlated predictors and a known linear
+predictor. The same object is used to illustrate the dense and big-memory
+interfaces.
+
+```{r simulate-bigmatrix, cache=TRUE, eval=LOCAL}
 library(bigPLScox)
-library(bigmemory)
-
 set.seed(2024)
-n_obs <- 5000
+
+n_obs  <- 5000
 n_pred <- 100
+k_true <- 3
 
-X_dense <- matrix(rnorm(n_obs * n_pred), nrow = n_obs)
-time <- rexp(n_obs, rate = 0.2)
-status <- rbinom(n_obs, 1, 0.7)
+Sigma <- diag(n_pred)
+for (b in 0:2) {
+  idx <- (b * 10 + 1):(b * 10 + 10)
+  Sigma[idx, idx] <- 0.7
+  diag(Sigma[idx, idx]) <- 1
+}
 
-big_dir <- tempfile("bigPLScox-")
-dir.create(big_dir)
-X_big <- filebacked.big.matrix(
-  nrow = n_obs,
-  ncol = n_pred,
-  backingpath = big_dir,
-  backingfile = "X.bin",
-  descriptorfile = "X.desc",
-  init = X_dense
-)
+L <- chol(Sigma)
+Z <- matrix(rnorm(n_obs * n_pred), nrow = n_obs)
+X_dense <- Z %*% L
+
+w1 <- numeric(n_pred); w1[1:4]   <- c( 1.0,  0.8,  0.6, -0.5)
+w2 <- numeric(n_pred); w2[5:8]   <- c(-0.7,  0.9, -0.4,  0.5)
+w3 <- numeric(n_pred); w3[9:12]  <- c( 0.6, -0.5,  0.7,  0.8)
+w1 <- w1 / sqrt(sum(w1^2))
+w2 <- w2 / sqrt(sum(w2^2))
+w3 <- w3 / sqrt(sum(w3^2))
+
+t1 <- as.numeric(scale(drop(X_dense %*% w1), center = TRUE, scale = TRUE))
+t2 <- as.numeric(scale(drop(X_dense %*% w2), center = TRUE, scale = TRUE))
+t3 <- as.numeric(scale(drop(X_dense %*% w3), center = TRUE, scale = TRUE))
+
+beta_true <- c(1.0, 0.6, 0.3)
+eta       <- beta_true[1]*t1 + beta_true[2]*t2 + beta_true[3]*t3
+
+lambda0 <- 0.05
+u <- runif(n_obs)
+time_event <- -log(u) / (lambda0 * exp(eta))
+
+target_event <- 0.65
+
+f <- function(lc) {
+  mean(time_event <= rexp(n_obs, rate = lc)) - target_event
+}
+lambda_c <- uniroot(f, c(1e-4, 1), tol = 1e-4)$root
+time_cens <- rexp(n_obs, rate = lambda_c)
+
+time   <- pmin(time_event, time_cens)
+status <- as.integer(time_event <= time_cens)
 ```
 
-The resulting `big.matrix` can be reopened in future sessions via its descriptor
-file. All big-memory modelling functions accept either an in-memory matrix or a
-`big.matrix` reference.
-
-# Fitting big-memory models
-
-`big_pls_cox()` runs the classical PLS-Cox algorithm while streaming data from
-disk.
-
-```{r big-pls-cox}
-fit_big <- big_pls_cox(
-  X = X_big,
-  time = time,
-  status = status,
-  ncomp = 5
-)
-
-head(fit_big$scores)
-str(fit_big)
-```
-
-The gradient-descent variant `big_pls_cox_gd()` uses stochastic optimisation and
-is well-suited for very large datasets.
-
-```{r big-pls-cox-gd}
-fit_big_gd <- big_pls_cox_gd(
-  X = X_big,
-  time = time,
-  status = status,
-  ncomp = 5,
-  max_iter = 100,
-  tol = 1e-4
+```{r bigmatrixbigmatrix, cache=TRUE, eval=LOCAL}
+if (requireNamespace("bigmemory", quietly = TRUE)) {
+  library(bigmemory)
+  big_dir <- tempfile("bigPLScox-")
+  dir.create(big_dir)
+  if(file.exists(paste(big_dir,"X.bin",sep="/"))){unlink(paste(big_dir,"X.bin",sep="/"))}
+  if(file.exists(paste(big_dir,"X.desc",sep="/"))){unlink(paste(big_dir,"X.desc",sep="/"))}
+  X_big <- bigmemory::as.big.matrix(
+    X_dense,
+    backingpath = big_dir,
+    backingfile = "X.bin",
+    descriptorfile = "X.desc"
   )
-
-head(fit_big$scores)
-str(fit_big)
+  X_big[1:6, 1:6]
+}
 ```
 
-Both functions return objects that expose the latent scores and loading vectors,
-allowing downstream visualisations and diagnostics identical to their in-memory
-counterparts.
+# Dense-matrix solvers
 
-# Cross-validation on big matrices
+The legacy solver `big_pls_cox()` performs the component extraction in R before
+fitting the Cox model. The new `big_pls_cox_fast()` backend exposes the same
+arguments but runs entirely in C++ for a substantial speed-up.
 
-Cross-validation for big-memory models is supported through the list interface.
-This enables streaming each fold directly from disk.
-
-```{r big-cv, eval = FALSE}
-set.seed(2024)
-data_big <- list(x = X_big, time = time, status = status)
-cv_big <- cv.coxgpls(
-  data_big,
-  nt = 5,
-  ncores = 1,
-  ind.block.x = c(10, 40)
+```{r dense-solvers, cache=TRUE, eval=LOCAL}
+fit_legacy <- big_pls_cox(
+  X = X_dense,
+  time = time,
+  status = status,
+  ncomp = k_true
 )
-cv_big$opt_nt
+fit_fast_dense <- big_pls_cox_fast(
+  X = X_dense,
+  time = time,
+  status = status,
+  ncomp = k_true
+)
+
+list(
+  legacy = head(fit_legacy$scores),
+  fast = head(fit_fast_dense$scores)
+)
+
+list(
+  legacy = apply(fit_legacy$scores, 2, var),
+  fast = apply(fit_fast_dense$scores, 2, var)
+)
 ```
 
-For large experiments consider combining `foreach::foreach()` with
-`doParallel::registerDoParallel()` to parallelise folds.
+The `summary()` method reports key diagnostics, including the final Cox
+coefficients and the number of predictors retained per component.
 
-# Timing snapshot
+```{r dense-summary, cache=TRUE, eval=LOCAL}
+summary(fit_fast_dense)
+```
 
-The native C++ solvers substantially reduce wall-clock time compared to fitting
-through the R interface alone. The `bench` package provides convenient
-instrumentation; the chunk below only runs when it is available.
+# Switching to file-backed matrices
 
-```{r big-timing}
-if (requireNamespace("bench", quietly = TRUE)) {
-  bench::mark(
-    streaming = big_pls_cox(X_big, time, status, ncomp = 5, keepX = 0),
-    gd = big_pls_cox_gd(X_big, time, status, ncomp = 5, max_iter = 150),
-    iterations = 5,
-    check = FALSE
+When working with a `big.matrix`, the same function operates on the shared
+memory pointer without copying data back to R. This is ideal for datasets that do
+not fit entirely in RAM.
+
+```{r fast-big, cache=TRUE, eval=LOCAL}
+if (exists("X_big")) {
+  fit_fast_big <- big_pls_cox_fast(
+    X = X_big,
+    time = time,
+    status = status,
+    ncomp = k_true
+  )
+  summary(fit_fast_big)
+}
+```
+
+The resulting scores, loadings, and centring parameters mirror the dense fit,
+which simplifies debugging and incremental model building.
+
+# Gradient descent for streaming data
+
+The SGD solver trades a small amount of accuracy for drastically reduced memory
+usage. Provide the same `big.matrix` object along with the desired number of
+components.
+
+```{r gd-fit, cache=TRUE, eval=LOCAL}
+if (exists("X_big")) {
+  fit_gd <- big_pls_cox_gd(
+    X = X_big,
+    time = time,
+    status = status,
+    ncomp = k_true,
+    max_iter = 2000,
+    learning_rate = 0.05,
+    tol = 1e-8
+  )
+  str(fit_gd)
+}
+```
+
+# Comparing the latent subspaces
+
+Component bases are unique only up to orthogonal rotations. Comparing the linear
+predictors generated by each solver verifies that they span the same subspace.
+
+```{r compare-solvers, cache=TRUE, eval=LOCAL}
+if (exists("fit_fast_dense") && exists("fit_gd")) {
+  eta_fast_dense <- drop(fit_fast_dense$scores %*% fit_fast_dense$cox_fit$coefficients)
+  eta_fast_big <- drop(fit_fast_big$scores %*% fit_fast_big$cox_fit$coefficients)
+  eta_gd <- drop(fit_gd$scores %*% fit_gd$cox_fit$coefficients)
+
+  list(
+    correlation_fast_dense_big = cor(eta_fast_dense, eta_fast_big),
+    correlation_fast_dense_gd = cor(eta_fast_dense, eta_gd),
+    concordance = c(
+      fast_dense = survival::concordance(survival::Surv(time, status) ~ eta_fast_dense)$concordance,
+      fast_big = survival::concordance(survival::Surv(time, status) ~ eta_fast_big)$concordance,
+      gd = survival::concordance(survival::Surv(time, status) ~ eta_gd)$concordance
+    )
   )
 }
 ```
 
-# Deviance residuals with big matrices
+# Predictions on new data
 
-Once a model has been fitted we can evaluate deviance residuals using the new
-C++ backend. Supplying the linear predictor avoids recomputing it in R and works
-with any matrix backend.
+Use `predict()` with `type = "components"` to obtain latent scores for new
+observations. Supplying explicit centring and scaling parameters ensures
+consistent projections across solvers.
 
-```{r big-deviance}
-eta_big <- predict(fit_big, type = "link")
-dr_cpp <- computeDR(time, status, engine = "cpp", eta = eta_big)
-max(abs(dr_cpp - computeDR(time, status)))
+```{r predict-new, cache=TRUE, eval=LOCAL}
+X_new <- matrix(rnorm(10 * n_pred), nrow = 10)
+
+scores_new <- predict(
+  fit_fast_dense,
+  newdata = X_new,
+  type = "components"
+)
+
+risk_new <- predict(
+  fit_fast_dense,
+  newdata = X_new,
+  type = "risk"
+)
+
+list(scores = scores_new, risk = risk_new)
 ```
 
+# Timing snapshot
+
+The `bench` package provides lightweight instrumentation for comparing solvers.
+The chunk below contrasts the classical implementation, the fast backend, and
+the SGD routine on the simulated dataset.
+
+```{r timing, cache=TRUE, eval=LOCAL}
+if (requireNamespace("bench", quietly = TRUE) && exists("X_big")) {
+  bench_res <- bench::mark(
+    big_pls = big_pls_cox(X_dense, time, status, ncomp = k_true),
+    fast_dense = big_pls_cox_fast(X_dense, time, status, ncomp = k_true),
+    fast_big = big_pls_cox_fast(X_big, time, status, ncomp = k_true),
+    gd = big_pls_cox_gd(X_big, time, status, ncomp = k_true, max_iter = 1500),
+    iterations = 30,
+    check = FALSE
+  )
+  bench_res$expression <- names(bench_res$expression)
+  bench_res[, c("expression", "median", "itr/sec", "mem_alloc")]
+}
+```
+
+```{r timing-plot, cache=TRUE, eval=LOCAL}
+if (exists("bench_res")) {
+  plot(bench_res, type = "jitter")
+}
+```
+
+# Cleaning up backing files
+
+File-backed matrices can be deleted once the analysis is complete. In production
+workflows you typically keep the descriptor (`.desc`) file alongside the binary
+matrix for later reuse.
 
 # Cleaning up
 
 Temporary backing files can be removed after the analysis. In production
 pipelines you will typically keep the descriptor file alongside the binary data.
 
-```{r cleanup}
-rm(X_big)
-file.remove(file.path(big_dir, "X.bin"))
-file.remove(file.path(big_dir, "X.desc"))
-unlink(big_dir, recursive = TRUE)
+```{r cleanup, cache=TRUE, eval=LOCAL}
+if (exists("X_big")) {
+  rm(X_big)
+  file.remove(file.path(big_dir, "X.bin"))
+  file.remove(file.path(big_dir, "X.desc"))
+  unlink(big_dir, recursive = TRUE)
+}
 ```
 
-# Additional resources
+# Further resources
 
-* `help(big_pls_cox)` and `help(big_pls_cox_gd)` document all tuning parameters
-  for the big-memory solvers.
-* The benchmarking vignette demonstrates how to measure performance improvements
-  obtained with file-backed matrices.
-* Consider persisting fitted objects with `saveRDS()` to avoid recomputing large
-  models when iterating on analyses.
+* The introductory vignette demonstrates how to combine the fast backend with
+  the matrix-based modelling functions and deviance residual utilities.
+* `vignette("bigPLScox-benchmarking", package = "bigPLScox")` provides a
+  reproducible benchmark that includes `survival::coxph()` and `coxgpls()`.
+* The help pages (`?big_pls_cox_fast`, `?big_pls_cox_gd`) describe all tuning
+  parameters in detail, including `keepX` for component-wise sparsity.
+  
